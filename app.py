@@ -16,6 +16,7 @@ class SimulationParams:
         self.r_ctf = r_ctf
         self.bs = bs
         
+        # L ahora es el tamaño de la caja en 3D
         self.L = self.bs * self.sig
         self.Volume = self.L ** 3
         
@@ -31,215 +32,249 @@ class MolecularDynamicsSimulatorPython:
         self.current_step = 0
         self.params = None
         self.particles = {}
-        self.simulation_data = {'T': [], 'E': [], 'P': []}
-        self.instant_values = {}
-
-    def _apply_pbc(self, r_vec):
-        """Aplica Condiciones de Contorno Periódicas (PBC) usando la Convención de Imagen Mínima (MIC)."""
-        L = self.params.L
-        dr = r_vec / L
-        # Aplicar el desplazamiento periódico
-        r_vec = r_vec - L * np.round(dr)
-        return r_vec
-
-    def _calculate_forces_and_energy(self):
-        """Calcula fuerzas de LJ y Energía Potencial Total (U_total) y Virial."""
-        p = self.params
-        N = p.N
+        self.instant_values = {'T': 0.0, 'E_total': 0.0, 'P': 0.0, 'Z': 0.0}
+        self.average_values = {'T': 0.0, 'E': 0.0, 'P': 0.0, 'count': 0}
         
-        self.particles['a_old'] = self.particles['a'].copy()
-        self.particles['a'] = np.zeros((N, 3))
-        U_total = 0.0
-        virial = 0.0 
-
-        for i in range(N):
-            for j in range(i + 1, N):
-                r_vec = self.particles['r'][i, :] - self.particles['r'][j, :]
-                r_vec_pbc = self._apply_pbc(r_vec) # MIC
-                r2 = np.sum(r_vec_pbc ** 2)
-
-                if r2 < 1e-6: 
-                     continue 
-
-                if r2 < p.rcut2:
-                    inv_r2 = 1.0 / r2
-                    inv_r6 = inv_r2 * inv_r2 * inv_r2
-                    
-                    U_ij = p.eps4 * (p.sig12 * inv_r6 * inv_r6 - p.sig6 * inv_r6)
-                    U_total += U_ij
-
-                    force_magnitude_factor = p.eps4 * inv_r2 * (
-                        12.0 * p.sig12 * inv_r6 * inv_r6 - 6.0 * p.sig6 * inv_r6
-                    )
-                    
-                    F_ij = force_magnitude_factor * r_vec_pbc
-                    
-                    self.particles['a'][i, :] += F_ij
-                    self.particles['a'][j, :] -= F_ij
-                    
-                    virial += np.dot(F_ij, r_vec_pbc)
+    def _initialize_fcc(self, N, L):
+        """Inicializa las posiciones en una red FCC con N partículas."""
+        n_cell = int(np.ceil((N / 4)**(1/3))) # Número de celdas unitarias por lado
+        r = []
+        base_positions = np.array([
+            [0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]
+        ])
         
-        return U_total, virial
-
-    def _update_positions_velocities(self):
-        """Paso de integración de Velocity Verlet."""
-        dt = self.params.dt
-        dt2_2 = dt * dt / 2.0
-        dt_2 = dt / 2.0
-        L = self.params.L
-
-        # 1. Actualizar posiciones (r(t+dt))
-        self.particles['r'] += self.particles['v'] * dt + self.particles['a_old'] * dt2_2
-        # Aplicar PBC a las posiciones: asegura que r esté en el rango [0, L]
-        self.particles['r'] = np.mod(self.particles['r'], L) 
-
-        # 2. Recalcular fuerzas (a(t+dt))
-        KE_old = 0.5 * np.sum(self.particles['v'] ** 2)
-        U_total_new, virial_new = self._calculate_forces_and_energy() # Esto actualiza self.particles['a']
-
-        # 3. Actualizar velocidades (v(t+dt))
-        self.particles['v'] += (self.particles['a_old'] + self.particles['a']) * dt_2
+        a = L / n_cell # Constante de red de la celda unitaria
         
-        KE = 0.5 * np.sum(self.particles['v'] ** 2)
+        count = 0
+        for i in range(n_cell):
+            for j in range(n_cell):
+                for k in range(n_cell):
+                    for base in base_positions:
+                        if count < N:
+                            pos = (np.array([i, j, k]) + base) * a
+                            r.append(pos)
+                            count += 1
+                        else:
+                            break
+                    if count >= N:
+                        break
+                if count >= N:
+                    break
+            if count >= N:
+                break
 
-        return KE, U_total_new, virial_new
+        return np.array(r, dtype=np.float64)
 
-    def _calculate_instantaneous_values(self, KE, PE, virial):
-        """Calcula y almacena los valores termodinámicos instantáneos."""
-        N = self.params.N
-        Volume = self.params.Volume
-        
-        temp = (2.0 * KE) / (3.0 * N)
-        
-        # Presión corregida: P = (N*T/V) - (Virial / (3V))
-        pressure = (N * temp / Volume) - (virial / (3.0 * Volume))
-        
-        Z = (pressure * Volume) / (N * temp) if (N * temp > 1e-9) else 0.0
-        
-        E_total = KE + PE
-        
-        self.instant_values = {
-            'T': temp, 'P': pressure, 'E_total': E_total, 'Z': Z,
-        }
 
     def initialize(self, params_dict):
-        """Inicializa el sistema MD con nuevos parámetros."""
-        self.params = SimulationParams(**params_dict)
-        self.current_step = 0
-        self.simulation_data = {'T': [], 'E': [], 'P': []}
-        
-        N = self.params.N
+        """Inicializa o reinicializa el estado de la simulación."""
+        N = int(params_dict.get('N', 50))
+        NS = int(params_dict.get('NS', 5000))
+        dt = float(params_dict.get('dt', 0.005))
+        T_0 = float(params_dict.get('T_0', 1.0))
+        ign = int(params_dict.get('ign', 200))
+        bs = float(params_dict.get('bs', 4.0))
+
+        self.params = SimulationParams(N=N, NS=NS, dt=dt, T_0=T_0, ign=ign, bs=bs)
         L = self.params.L
         
-        # Inicialización de posiciones (retículo SC)
-        n_side = int(np.ceil(N ** (1/3)))
-        spacing = L / n_side
-        p_count = 0
-        r_list = []
-        v_list = []
+        # 1. Posiciones: Inicialización FCC
+        r = self._initialize_fcc(N, L)
         
-        for i in range(n_side):
-            for j in range(n_side):
-                for k in range(n_side):
-                    if p_count < N:
-                        # Posiciones centradas
-                        r_list.append([(i + 0.5) * spacing, (j + 0.5) * spacing, (k + 0.5) * spacing])
-                        v_list.append(np.random.randn(3)) # Usar randn para distribución normal
-                        p_count += 1
+        # 2. Velocidades: Distribución de Maxwell-Boltzmann
+        v = np.random.randn(N, 3) # Vector de velocidades aleatorias
         
-        self.particles['r'] = np.array(r_list)
+        # Eliminar el momento total (para simular un sistema aislado en el centro de masa)
+        v -= np.mean(v, axis=0) 
         
-        # Añadir Jitter para estabilidad (romper la red perfecta)
-        max_jitter = 0.05 * spacing # 5% del espaciado
-        self.particles['r'] += np.random.uniform(-max_jitter, max_jitter, self.particles['r'].shape)
-
-        self.particles['r'] = np.mod(self.particles['r'], L)
-
-        self.particles['v'] = np.array(v_list)
-        self.particles['a'] = np.zeros((N, 3))
-        self.particles['a_old'] = np.zeros((N, 3))
+        # Ajustar las velocidades para que la temperatura inicial sea T_0
+        current_T = np.sum(v**2) / (3 * N - 3) # La temperatura actual
+        scale_factor = np.sqrt(T_0 / current_T)
+        v *= scale_factor
         
-        # Escalado de Velocidad para T_0 
-        initial_KE_unscaled = 0.5 * np.sum(self.particles['v'] ** 2)
-        initial_T_unscaled = (2 * initial_KE_unscaled) / (3 * N)
-        scale_factor = np.sqrt(self.params.T_0 / initial_T_unscaled)
-        self.particles['v'] *= scale_factor
+        # 3. Aceleraciones y Variables de estado
+        self.particles = {
+            'r': r,
+            'v': v,
+            'a': np.zeros((N, 3), dtype=np.float64)
+        }
         
-        # Centrado del momento (Momentum=0)
-        current_momentum = np.sum(self.particles['v'], axis=0)
-        self.particles['v'] -= current_momentum / N
-        
-        initial_KE_scaled = 0.5 * np.sum(self.particles['v'] ** 2)
-        
-        U_initial, virial_initial = self._calculate_forces_and_energy() 
-        self._calculate_instantaneous_values(initial_KE_scaled, U_initial, virial_initial)
-
+        self.current_step = 0
         self.is_initialized = True
+        self.average_values = {'T': 0.0, 'E': 0.0, 'P': 0.0, 'count': 0}
+
+        # Calcular fuerzas y energía iniciales (se almacena en self.particles['a'])
+        self.compute_forces() 
+        self._compute_instantaneous_values() # Calcula T, E, P, Z iniciales
         
         return {
             "L": L, 
             "N": N, 
-            "r": self.particles['r'][:, :2].tolist(), # Solo X, Y para la UI
+            "r": self.particles['r'].tolist(), # <--- CORRECCIÓN: Envía las 3 coordenadas (X, Y, Z)
             "T": self.instant_values['T'],
             "E": self.instant_values['E_total'],
             "P": self.instant_values['P'],
             "Z": self.instant_values['Z'] 
         }
 
-    def do_step(self):
-        # ... (El resto de la lógica do_step es la misma y está correcta) ...
-        if not self.is_initialized:
-            return {"error": "El simulador no está inicializado."}
+    def _minimum_image_convention(self, r_ij):
+        """Aplica la convención de la imagen mínima (Periodic Boundary Conditions)."""
+        L = self.params.L
+        r_ij[r_ij > L/2] -= L
+        r_ij[r_ij < -L/2] += L
+        return r_ij
 
-        self.current_step += 1
+    def compute_forces(self):
+        """Calcula fuerzas, energía potencial y presión viral."""
+        r = self.particles['r']
+        N = self.params.N
+        L = self.params.L
+        eps4 = self.params.eps4
+        sig6 = self.params.sig6
+        sig12 = self.params.sig12
+        rcut2 = self.params.rcut2
+
+        a = np.zeros((N, 3), dtype=np.float64)
+        E_pot = 0.0
+        virial = 0.0
+
+        for i in range(N):
+            for j in range(i + 1, N):
+                r_ij = r[i] - r[j]
+                r_ij = self._minimum_image_convention(r_ij)
+                r2 = np.sum(r_ij**2)
+                
+                if r2 < rcut2:
+                    r6 = r2**3
+                    r12 = r6**2
+                    
+                    force = eps4 * (12.0 * sig12 / r12 - 6.0 * sig6 / r6) / r2
+                    a_ij = force * r_ij
+                    
+                    a[i] += a_ij
+                    a[j] -= a_ij
+                    
+                    E_pot += eps4 * (sig12 / r12 - sig6 / r6)
+                    virial += np.dot(a_ij, r_ij)
+
+        self.particles['a'] = a
+        self.instant_values['E_pot'] = E_pot
+        self.instant_values['virial'] = virial
+
+    def _compute_instantaneous_values(self):
+        """Calcula T, E, P, Z en el estado actual."""
+        v = self.particles['v']
+        N = self.params.N
+        Volume = self.params.Volume
         
-        KE, PE, virial = self._update_positions_velocities()
-        self._calculate_instantaneous_values(KE, PE, virial)
+        E_kin = 0.5 * np.sum(v**2)
+
+        self.instant_values['T'] = 2.0 * E_kin / (3.0 * N)
+
+        self.instant_values['E_total'] = E_kin + self.instant_values['E_pot']
+
+        rho = N / Volume
+        virial_sum = self.instant_values['virial']
+        self.instant_values['P'] = rho * self.instant_values['T'] + (1.0 / (3.0 * Volume)) * virial_sum
         
-        if self.current_step >= self.params.ign:
-            self.simulation_data['T'].append(self.instant_values['T'])
-            self.simulation_data['E'].append(self.instant_values['E_total'])
-            self.simulation_data['P'].append(self.instant_values['P'])
+        self.instant_values['Z'] = self.instant_values['P'] / (rho * self.instant_values['T']) if self.instant_values['T'] > 0 else 0.0
+
+    def _update_averages(self):
+        """Actualiza los promedios después del periodo de ignición."""
+        if self.current_step > self.params.ign:
+            self.average_values['T'] += self.instant_values['T']
+            self.average_values['E'] += self.instant_values['E_total']
+            self.average_values['P'] += self.instant_values['P']
+            self.average_values['count'] += 1
+
+    def _integrate_step(self):
+        """Implementa el algoritmo de Verlet de forma simplificada."""
+        r = self.particles['r']
+        v = self.particles['v']
+        a = self.particles['a']
+        dt = self.params.dt
+        L = self.params.L
+
+        # 1. Actualizar posiciones (r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt^2)
+        r += v * dt + 0.5 * a * dt**2
+
+        r = np.mod(r, L)
+        self.particles['r'] = r
+
+        # 2. Guardar aceleración actual (a(t)) para calcular velocidades al final
+        a_old = a.copy() 
+
+        # 3. Recalcular fuerzas (y obtener la nueva aceleración a(t+dt))
+        self.compute_forces()
+        a_new = self.particles['a']
+
+        # 4. Actualizar velocidades (v(t+dt) = v(t) + 0.5 * (a(t) + a(t+dt)) * dt)
+        v += 0.5 * (a_old + a_new) * dt
+        self.particles['v'] = v
+        
+        # 5. Control de Temperatura (Termostato de Berendsen - solo para el periodo de ignición)
+        if self.current_step < self.params.ign:
+            E_kin = 0.5 * np.sum(v**2)
+            current_T = 2.0 * E_kin / (3.0 * self.params.N)
             
-        return {
-            "step": self.current_step,
-            "r": self.particles['r'][:, :2].tolist(), 
-            "T": self.instant_values['T'],
-            "E": self.instant_values['E_total'],
-            "P": self.instant_values['P'],
-            "Z": self.instant_values['Z'], 
-            "is_equilibrium": self.current_step >= self.params.ign
-        }
-    
-    def calculate_averages(self):
-        # ... (La lógica calculate_averages es la misma y está correcta) ...
-        if not self.simulation_data['E']:
-            return 0.0, 0.0, 0.0 
-
-        avg_T = np.mean(self.simulation_data['T'])
-        avg_E = np.mean(self.simulation_data['E'])
-        avg_P = np.mean(self.simulation_data['P'])
+            tau = 0.1
+            scale_factor = np.sqrt(1.0 + (dt / tau) * ((self.params.T_0 / current_T) - 1.0))
+            
+            v *= scale_factor
+            self.particles['v'] = v
         
-        return avg_T, avg_E, avg_P
+        self.particles['a'] = a_new
+        
+    def do_step(self):
+        """Ejecuta un paso de integración."""
+        if not self.is_initialized:
+            return {"error": "El simulador no ha sido inicializado."}
+        
+        try:
+            self._integrate_step()
+            self.current_step += 1
+            
+            self._compute_instantaneous_values()
+            
+            self._update_averages()
 
+            return {
+                "step": self.current_step,
+                "r": self.particles['r'].tolist(), # <--- CORRECCIÓN: Envía las 3 coordenadas (X, Y, Z)
+                "T": self.instant_values['T'],
+                "E": self.instant_values['E_total'],
+                "P": self.instant_values['P'],
+                "Z": self.instant_values['Z'], 
+                "is_equilibrium": self.current_step >= self.params.ign
+            }
+        except Exception as e:
+             return {"error": f"Error en do_step: {str(e)}"}
 
-# --- 2. SERVIDOR FLASK (CONFIGURACIÓN CORREGIDA) ---
+    def get_averages(self):
+        """Retorna los promedios calculados."""
+        count = self.average_values['count']
+        if count == 0:
+            return {"T_avg": 0.0, "E_avg": 0.0, "P_avg": 0.0}
+        
+        return {
+            "T_avg": self.average_values['T'] / count,
+            "E_avg": self.average_values['E'] / count,
+            "P_avg": self.average_values['P'] / count,
+        }
 
-# ********** CORRECCIÓN CRÍTICA **********
-# Vuelve a la configuración estándar de Flask para que encuentre 'simulador.html'
-app = Flask(__name__, template_folder='templates', static_folder='static') 
+# --- 2. CONFIGURACIÓN DE FLASK (Servidor) ---
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 simulator_instance = MolecularDynamicsSimulatorPython()
 
 @app.route('/')
-def serve_html():
-    # Flask buscará 'simulador.html' dentro de la carpeta 'templates'
+def index():
     return render_template('simulador.html')
 
 @app.route('/api/initialize', methods=['POST'])
 def initialize_simulation():
-    data = request.json
     try:
-        data['N'] = int(data.get('N', 32)) 
+        data = request.json
+        data['N'] = int(data.get('N', 50))
         data['NS'] = int(data.get('NS', 5000))
         data['dt'] = float(data.get('dt', 0.005))
         data['T_0'] = float(data.get('T_0', 1.0))
@@ -267,14 +302,20 @@ def run_step():
 @app.route('/api/averages', methods=['GET'])
 def get_averages():
     try:
-        avg_T, avg_E, avg_P = simulator_instance.calculate_averages()
-        return jsonify({"avg_T": avg_T, "avg_E": avg_E, "avg_P": avg_P})
+        avg_T, avg_E, avg_P = simulator_instance.get_averages().values()
+        return jsonify({
+            "T_avg": f"{avg_T:.4f}", 
+            "E_avg": f"{avg_E:.4f}", 
+            "P_avg": f"{avg_P:.4f}"
+        }), 200
     except Exception as e:
-        return jsonify({"error": "No hay datos para promediar."}), 400
+        print(f"Error al calcular promedios: {e}")
+        return jsonify({"error": f"Error al calcular promedios: {str(e)}"}), 500
 
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    return jsonify({"status": "ok", "message": "pong"}), 200
 
 if __name__ == '__main__':
-    print("Iniciando servidor Flask...")
-    print("Abre tu navegador en: http://127.0.0.1:5000/")
-    # Quitar debug=True para producción
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
