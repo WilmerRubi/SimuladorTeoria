@@ -77,24 +77,111 @@
                         <label class="block">
                             <span class="text-sm font-medium text-gray-700">N (Partículas):</span>
                             <input id="inputN" type="number" value="32" min="1" max="100" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Número total de partículas en la simulación. Incrementar N hace la simulación más realista pero también más lenta.</p>
                         </label>
                         <label class="block">
-                            <span class="text-sm font-medium text-gray-700">T₀ (Temp. Inicial):</span>
+                            <span class="text-sm font-medium text-gray-700">T₀ (Temperatura inicial):</span>
                             <input id="inputT0" type="number" step="0.1" value="1.0" min="0.1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Controla la energía cinética inicial del sistema (en unidades reducidas, k_B = 1). Afecta la velocidad promedio de las partículas.</p>
                         </label>
                         <label class="block">
-                            <span class="text-sm font-medium text-gray-700">dt (Paso de Tiempo):</span>
+                            <span class="text-sm font-medium text-gray-700">dt (Paso de tiempo):</span>
                             <input id="inputDt" type="number" step="0.001" value="0.005" min="0.001" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Tiempo simulado entre cada actualización del sistema. Valores más pequeños aumentan exactitud pero requieren más pasos.</p>
                         </label>
                         <label class="block">
                             <span class="text-sm font-medium text-gray-700">Tamaño de Caja (bs):</span>
                             <input id="inputBoxSize" type="number" step="0.1" value="4.0" min="2.0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Tamaño de la caja que contiene las partículas, expresado en múltiplos de σ (sigma). Aumentar para más espacio.</p>
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-gray-700">σ (sigma):</span>
+                            <input id="inputSigma" type="number" step="0.1" value="1.0" min="0.001" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Longitud característica de la partícula. Controla la escala espacial; σ=1 es la unidad base.</p>
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-gray-700">ε (epsilon):</span>
+                            <input id="inputEps" type="number" step="0.1" value="1.0" min="0.0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Profundidad del pozo de energía del potencial Lennard-Jones; controla cuán fuerte se atraen/repelen las partículas (energía en unidades internas).</p>
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-gray-700">Masa por partícula (m):</span>
+                            <input id="inputMass" type="number" step="0.01" value="1.0" min="0.0001" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Masa de cada partícula (unidades internas). Afecta cómo responden a las fuerzas (a = F/m).</p>
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-gray-700">Tipo de Pared:</span>
+                            <select id="selectWallType" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="periodic">Periódica (PBC)</option>
+                                <option value="reflective">Reflectiva (Rebote)</option>
+                            </select>
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Elige si las partículas que salen por un lado reaparecen en el opuesto (periódica) o rebotan en la pared (reflectiva).</p>
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-gray-700">Coef. de restitución (e, 0-1):</span>
+                            <input id="inputRestitution" type="number" step="0.01" value="1.0" min="0" max="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Valor entre 0 y 1 que controla cuánto conserva la velocidad una partícula al rebotar (1 = completamente elástico).</p>
                         </label>
                         <label class="block">
                             <span class="text-sm font-medium text-gray-700">Pasos de Equilibrio (ign):</span>
                             <input id="inputIgn" type="number" value="200" min="0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">Número de pasos iniciales que se descartan mientras el sistema alcanza equilibrio; se usa para calcular promedios estables.</p>
                         </label>
                     </div>
+
+                    <div class="mt-4 text-center">
+                        <button id="toggleHelpBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg">Ver más</button>
+                    </div>
+
+                    <!-- Gestión de partículas integrada dentro del mismo cuadro de controles -->
+                    <div class="mt-6 border-t pt-4">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-3">Gestión de Partículas</h3>
+                        <div class="mb-3">
+                            <label class="block text-sm font-medium text-gray-700">Importar CSV:</label>
+                            <div class="mt-2">
+                                <input id="particlesFile" type="file" accept=".csv" class="text-sm w-full">
+                            </div>
+                            <div class="mt-2 flex items-center gap-2">
+                                <button id="importCsvBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-1 px-3 rounded">Importar</button>
+                                <button id="exportCsvBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-1 px-3 rounded">Exportar</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Formato CSV esperado: x,y,z,vx,vy,vz,m (m opcional)</p>
+                        </div>
+
+                        <div class="mb-3 border-t pt-3">
+                            <h4 class="text-sm font-medium text-gray-700 mb-2">Añadir partícula</h4>
+                            <div class="grid grid-cols-3 gap-2">
+                                <input id="new_x" placeholder="x" class="border rounded p-1 text-sm">
+                                <input id="new_y" placeholder="y" class="border rounded p-1 text-sm">
+                                <input id="new_z" placeholder="z" class="border rounded p-1 text-sm">
+                                <input id="new_vx" placeholder="vx" class="border rounded p-1 text-sm">
+                                <input id="new_vy" placeholder="vy" class="border rounded p-1 text-sm">
+                                <input id="new_vz" placeholder="vz" class="border rounded p-1 text-sm">
+                                <input id="new_m" placeholder="m" class="border rounded p-1 text-sm" value="1.0">
+                                <div></div>
+                                <button id="addParticleBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1 px-3 rounded">Añadir</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 mb-2">Partículas actuales</h4>
+                            <div class="overflow-auto max-h-48">
+                                <table id="particlesTable" class="w-full text-sm text-left">
+                                    <thead>
+                                        <tr>
+                                            <th class="px-2 py-1">#</th>
+                                            <th class="px-2 py-1">x,y,z</th>
+                                            <th class="px-2 py-1">vx,vy,vz</th>
+                                            <th class="px-2 py-1">m</th>
+                                            <th class="px-2 py-1">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
 
                 <div class="card p-6">
@@ -159,6 +246,25 @@
 
     </div>
 
+    <script>
+        (function(){
+            function toggleHelp() {
+                const elems = document.querySelectorAll('.help-text');
+                elems.forEach(el => el.classList.toggle('hidden'));
+                const btn = document.getElementById('toggleHelpBtn');
+                if (!btn) return;
+                btn.textContent = elems.length && elems[0].classList.contains('hidden') ? 'Ver más' : 'Ver menos';
+            }
+            document.addEventListener('DOMContentLoaded', function(){
+                const btn = document.getElementById('toggleHelpBtn');
+                if (!btn) return;
+                btn.addEventListener('click', function(e){
+                    e.preventDefault();
+                    toggleHelp();
+                });
+            });
+        })();
+    </script>
     <script src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
 </html>

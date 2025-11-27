@@ -95,11 +95,8 @@ function init3DScene() {
     scene.add(directionalLight);
 
     // 6. La Caja de Simulación (Marco de referencia)
-    const boxGeometry = new THREE.BoxGeometry(L_BOX, L_BOX, L_BOX);
-    const boxEdges = new THREE.EdgesGeometry(boxGeometry);
-    const boxLine = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x4b5563, linewidth: 2 }));
-    boxLine.position.set(L_BOX / 2, L_BOX / 2, L_BOX / 2);
-    scene.add(boxLine);
+    // Se crea mediante updateSimulationBox para permitir reconstruirla cuando cambie L_BOX
+    updateSimulationBox(L_BOX);
     
     // Ejes de Coordenadas (DEBUG) - Si ves esto, Three.js funciona
     const axesHelper = new THREE.AxesHelper(L_BOX * 1.5); 
@@ -114,6 +111,41 @@ function init3DScene() {
     animate();
 
     window.addEventListener('resize', onWindowResize, false);
+}
+
+// Reconstruye la caja de simulación y reajusta cámara/controles cuando cambia L
+function updateSimulationBox(L) {
+    if (!scene) return;
+
+    // El objeto tendrá nombre 'simBox' para identificarlo fácilmente
+    const existing = scene.getObjectByName('simBox');
+    if (existing) {
+        // eliminar y disponer recursos
+        if (existing.geometry) existing.geometry.dispose();
+        if (existing.material) existing.material.dispose();
+        scene.remove(existing);
+    }
+
+    const boxGeometry = new THREE.BoxGeometry(L, L, L);
+    const boxEdges = new THREE.EdgesGeometry(boxGeometry);
+    const boxMaterial = new THREE.LineBasicMaterial({ color: 0x4b5563, linewidth: 2 });
+    const boxLine = new THREE.LineSegments(boxEdges, boxMaterial);
+    boxLine.name = 'simBox';
+    boxLine.position.set(L / 2, L / 2, L / 2);
+    scene.add(boxLine);
+
+    // Ajustar cámara para que vea la caja completa
+    if (camera) {
+        // alejar la cámara proporcionalmente a L
+        camera.position.set(L * 0.5, L * 0.5, L * 2.5);
+        camera.lookAt(new THREE.Vector3(L / 2, L / 2, L / 2));
+    }
+
+    // Reajustar el target de los controles
+    if (controls) {
+        controls.target.set(L / 2, L / 2, L / 2);
+        controls.update();
+    }
 }
 
 function onWindowResize() {
@@ -131,7 +163,12 @@ function updateParticles3D(r, L) {
     // El backend debe enviar SÓLO las 3 coordenadas (x, y, z)
     const N = r.length;
     const particleRadius = L * particleRadiusFactor; 
+    // Si el tamaño de caja cambió, reconstruir la caja y ajustar cámara
+    const prevL = L_BOX;
     L_BOX = L;
+    if (Math.abs(prevL - L_BOX) > 1e-8) {
+        updateSimulationBox(L_BOX);
+    }
 
     // Inicializar o ajustar el InstancedMesh
     if (!particleMesh || particleMesh.count !== N) {
@@ -276,7 +313,12 @@ function initializeSimulation() {
         dt: parseFloat(document.getElementById('inputDt').value),
         T_0: parseFloat(document.getElementById('inputT0').value),
         ign: parseInt(document.getElementById('inputIgn').value),
-        bs: parseFloat(document.getElementById('inputBoxSize').value)
+        bs: parseFloat(document.getElementById('inputBoxSize').value),
+        sig: parseFloat(document.getElementById('inputSigma').value),
+        eps: parseFloat(document.getElementById('inputEps').value),
+        mass: parseFloat(document.getElementById('inputMass').value),
+        wall_type: document.getElementById('selectWallType').value,
+        restitution: parseFloat(document.getElementById('inputRestitution').value)
     };
     
     return fetch('/api/initialize', {
@@ -298,10 +340,9 @@ function initializeSimulation() {
             return {success: false, data: data};
         }
         
-        L_BOX = data.L; 
-        
-        // *** CAMBIO CRÍTICO B: Usar la función de visualización 3D ***
-        updateParticles3D(data.r, L_BOX); 
+        // L no se asigna aquí para que updateParticles3D detecte el cambio
+        // y reconstruya la caja si es necesario.
+        updateParticles3D(data.r, data.L);
         
         document.getElementById('startButton').disabled = false;
         document.getElementById('stopButton').disabled = true;
@@ -327,6 +368,118 @@ function initializeSimulation() {
         document.getElementById('stopButton').disabled = true;
         return {success: false, error: error};
     });
+}
+
+// --- 4.b Gestión de Partículas (Frontend) ---
+function fetchParticles() {
+    return fetch('/api/particles', { method: 'GET' })
+    .then(resp => resp.json())
+    .then(data => {
+        if (data.error) {
+            logMessage('Error al obtener partículas: ' + data.error);
+            return [];
+        }
+        return data.particles || [];
+    })
+    .catch(err => {
+        logMessage('Error de red al obtener partículas: ' + err);
+        return [];
+    });
+}
+
+function renderParticlesTable() {
+    fetchParticles().then(particles => {
+        const tbody = document.querySelector('#particlesTable tbody');
+        tbody.innerHTML = '';
+        particles.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="px-2 py-1">${p.index}</td>
+                <td class="px-2 py-1">${p.r.map(x=>x.toFixed(3)).join(', ')}</td>
+                <td class="px-2 py-1">${p.v.map(x=>x.toFixed(3)).join(', ')}</td>
+                <td class="px-2 py-1">${p.m.toFixed(3)}</td>
+                <td class="px-2 py-1"><button data-idx="${p.index}" class="edit-part bg-gray-200 px-2 py-1 rounded mr-1">Editar</button><button data-idx="${p.index}" class="del-part bg-red-200 px-2 py-1 rounded">Borrar</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // attach handlers
+        document.querySelectorAll('.del-part').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.dataset.idx);
+                deleteParticle(idx);
+            });
+        });
+        document.querySelectorAll('.edit-part').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.dataset.idx);
+                // simple prompt-based edit for now
+                const xr = prompt('Nueva posición x,y,z (coma separada)');
+                const vv = prompt('Nueva velocidad vx,vy,vz (coma separada)');
+                const mm = prompt('Nueva masa (m)');
+                if (xr || vv || mm) {
+                    const payload = {};
+                    if (xr) payload.r = xr.split(',').map(s=>parseFloat(s.trim()));
+                    if (vv) payload.v = vv.split(',').map(s=>parseFloat(s.trim()));
+                    if (mm) payload.m = parseFloat(mm);
+                    updateParticle(idx, payload).then(()=> renderParticlesTable());
+                }
+            });
+        });
+    });
+}
+
+function addParticle(p) {
+    return fetch('/api/particles', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({particles: [p]}) })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) throw new Error(data.error);
+        logMessage('Partícula añadida. N=' + data.N);
+        renderParticlesTable();
+    })
+    .catch(err => logMessage('Error al añadir partícula: ' + err));
+}
+
+function updateParticle(idx, payload) {
+    return fetch(`/api/particles/${idx}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) throw new Error(data.error);
+        logMessage('Partícula actualizada.');
+    })
+    .catch(err => logMessage('Error al actualizar partícula: ' + err));
+}
+
+function deleteParticle(idx) {
+    if (!confirm('Borrar partícula ' + idx + '?')) return;
+    fetch(`/api/particles/${idx}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) throw new Error(data.error);
+        logMessage('Partícula borrada. N=' + data.N);
+        renderParticlesTable();
+    })
+    .catch(err => logMessage('Error al borrar partícula: ' + err));
+}
+
+function importCsvFile(file) {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch('/api/particles/import', { method: 'POST', body: form })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) throw new Error(data.error);
+        logMessage('CSV importado. N=' + data.N);
+        // reload particles and visualization
+        initializeSimulation();
+        renderParticlesTable();
+    })
+    .catch(err => logMessage('Error al importar CSV: ' + err));
+}
+
+function exportParticlesCsv() {
+    // Forcing browser to download
+    window.location = '/api/particles/export';
 }
 
 function startSimulation() {
@@ -444,10 +597,28 @@ window.onload = () => {
     canvas.width = canvas.parentElement.offsetWidth;
     canvas.height = canvas.parentElement.offsetHeight;
 
-    initializeSimulation(); 
+    initializeSimulation().then(()=> renderParticlesTable()); 
     
     document.getElementById('startButton').addEventListener('click', startSimulation);
     document.getElementById('stopButton').addEventListener('click', stopSimulation);
+    document.getElementById('addParticleBtn').addEventListener('click', function(){
+        const x = parseFloat(document.getElementById('new_x').value || 0);
+        const y = parseFloat(document.getElementById('new_y').value || 0);
+        const z = parseFloat(document.getElementById('new_z').value || 0);
+        const vx = parseFloat(document.getElementById('new_vx').value || 0);
+        const vy = parseFloat(document.getElementById('new_vy').value || 0);
+        const vz = parseFloat(document.getElementById('new_vz').value || 0);
+        const m = parseFloat(document.getElementById('new_m').value || 1.0);
+        addParticle({r: [x,y,z], v: [vx,vy,vz], m: m});
+    });
+
+    document.getElementById('importCsvBtn').addEventListener('click', function(){
+        const fileInput = document.getElementById('particlesFile');
+        if (fileInput.files.length === 0) { alert('Selecciona un archivo CSV primero'); return; }
+        importCsvFile(fileInput.files[0]);
+    });
+
+    document.getElementById('exportCsvBtn').addEventListener('click', function(){ exportParticlesCsv(); });
     
     window.addEventListener('resize', onWindowResize, false);
 };
