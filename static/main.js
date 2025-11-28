@@ -1,6 +1,3 @@
-// main.js (VERSIÓN 3D FINAL Y ESTABLE)
-
-// Variables Globales de la Simulación
 let simulationRunning = false;
 let currentFrameHandle = null;
 let L_BOX = 4.0; 
@@ -13,15 +10,15 @@ let chartData = {
 let chartUpdateCounter = 0; 
 const CHART_SAMPLING_RATE = 10; 
 const MAX_POINTS = 500; 
-const VISUALIZATION_DELAY_MS = 30; // ~33 FPS
+const VISUALIZATION_DELAY_MS = 30; 
 
-// --- VARIABLES GLOBALES DE THREE.JS ---
+
 let scene, camera, renderer, controls;
 let particleMesh; 
-const particleRadiusFactor = 0.05; // Radio visible
+const particleRadiusFactor = 0.05; 
 const dummy = new THREE.Object3D(); 
 
-// --- 1. FUNCIONES AUXILIARES DE LA INTERFAZ (UI) ---
+
 
 function logMessage(message) {
     const logContainer = document.getElementById('logContainer');
@@ -62,31 +59,25 @@ function updateSimulationDisplay(step, T, E, P, Z, isEquilibrium) {
     }
 }
 
-// --- 2. FUNCIONES DE VISUALIZACIÓN 3D (NUEVO) ---
-
 function init3DScene() {
     const canvasContainer = document.querySelector('.canvas-container');
     const width = canvasContainer.offsetWidth;
     const height = canvasContainer.offsetHeight;
 
-    // 1. Renderer 
     renderer = new THREE.WebGLRenderer({ antialias: true, canvas: document.getElementById('mdCanvas') });
     renderer.setSize(width, height);
 
-    // 2. Escena
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1f2937); 
 
-    // 3. Cámara
     camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
     camera.position.z = L_BOX * 2.5; 
     camera.position.y = L_BOX * 0.5;
 
-    // 4. Controles (CRÍTICO: Inicialización de OrbitControls)
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; 
     controls.dampingFactor = 0.05;
-    controls.target.set(L_BOX / 2, L_BOX / 2, L_BOX / 2); // Apuntar al centro de la caja
+    controls.target.set(L_BOX / 2, L_BOX / 2, L_BOX / 2);
 
     // 5. Luces
     scene.add(new THREE.AmbientLight(0x404040, 5)); 
@@ -94,15 +85,10 @@ function init3DScene() {
     directionalLight.position.set(10, 10, 10);
     scene.add(directionalLight);
 
-    // 6. La Caja de Simulación (Marco de referencia)
-    // Se crea mediante updateSimulationBox para permitir reconstruirla cuando cambie L_BOX
     updateSimulationBox(L_BOX);
     
-    // Ejes de Coordenadas (DEBUG) - Si ves esto, Three.js funciona
     const axesHelper = new THREE.AxesHelper(L_BOX * 1.5); 
     scene.add(axesHelper);
-    
-    // Bucle de renderizado para Three.js
     const animate = () => {
         requestAnimationFrame(animate);
         controls.update(); 
@@ -113,14 +99,11 @@ function init3DScene() {
     window.addEventListener('resize', onWindowResize, false);
 }
 
-// Reconstruye la caja de simulación y reajusta cámara/controles cuando cambia L
 function updateSimulationBox(L) {
     if (!scene) return;
 
-    // El objeto tendrá nombre 'simBox' para identificarlo fácilmente
     const existing = scene.getObjectByName('simBox');
     if (existing) {
-        // eliminar y disponer recursos
         if (existing.geometry) existing.geometry.dispose();
         if (existing.material) existing.material.dispose();
         scene.remove(existing);
@@ -134,14 +117,11 @@ function updateSimulationBox(L) {
     boxLine.position.set(L / 2, L / 2, L / 2);
     scene.add(boxLine);
 
-    // Ajustar cámara para que vea la caja completa
     if (camera) {
-        // alejar la cámara proporcionalmente a L
         camera.position.set(L * 0.5, L * 0.5, L * 2.5);
         camera.lookAt(new THREE.Vector3(L / 2, L / 2, L / 2));
     }
 
-    // Reajustar el target de los controles
     if (controls) {
         controls.target.set(L / 2, L / 2, L / 2);
         controls.update();
@@ -159,18 +139,14 @@ function onWindowResize() {
 }
 
 function updateParticles3D(r, L) {
-    // r ahora tiene (N, 3) dimensiones, pero la visualización anterior usaba (N, 2)
-    // El backend debe enviar SÓLO las 3 coordenadas (x, y, z)
     const N = r.length;
     const particleRadius = L * particleRadiusFactor; 
-    // Si el tamaño de caja cambió, reconstruir la caja y ajustar cámara
     const prevL = L_BOX;
     L_BOX = L;
     if (Math.abs(prevL - L_BOX) > 1e-8) {
         updateSimulationBox(L_BOX);
     }
 
-    // Inicializar o ajustar el InstancedMesh
     if (!particleMesh || particleMesh.count !== N) {
         if (particleMesh) {
             scene.remove(particleMesh);
@@ -183,19 +159,16 @@ function updateParticles3D(r, L) {
         particleMesh = new THREE.InstancedMesh(particleGeometry, particleMaterial, N);
         scene.add(particleMesh);
         
-        // Actualizar la posición de la caja
         const box = scene.children.find(c => c.type === 'LineSegments');
         if (box) box.position.set(L_BOX / 2, L_BOX / 2, L_BOX / 2);
         
-        // Reajustar el target de los controles
         controls.target.set(L_BOX / 2, L_BOX / 2, L_BOX / 2); 
     }
     
-    // Actualizar la matriz de cada instancia
     for (let i = 0; i < N; i++) {
         const x = r[i][0];
         const y = r[i][1];
-        const z = r[i][2]; // Ahora usamos Z
+        const z = r[i][2]; 
 
         dummy.position.set(x, y, z);
         
@@ -206,10 +179,8 @@ function updateParticles3D(r, L) {
     particleMesh.instanceMatrix.needsUpdate = true;
 }
 
-// --- 3. FUNCIONES DE GRÁFICOS (Chart.js) ---
 
 function initCharts() {
-    // ... (Mantener la lógica de initCharts y updateCharts igual que tu versión actual) ...
     const commonOptions = {
         animation: false,
         responsive: true,
@@ -295,7 +266,7 @@ function updateCharts(data) {
     tempChart.update('none');
 }
 
-// --- 4. CONEXIÓN CON PYTHON ---
+// ---CONEXIÓN CON PYTHON ---
 
 function initializeSimulation() {
     logMessage("Recogiendo parámetros de la UI y enviando al servidor...");
@@ -345,8 +316,6 @@ function initializeSimulation() {
             return {success: false, data: data};
         }
         
-        // L no se asigna aquí para que updateParticles3D detecte el cambio
-        // y reconstruya la caja si es necesario.
         updateParticles3D(data.r, data.L);
         
         document.getElementById('startButton').disabled = false;
@@ -367,7 +336,7 @@ function initializeSimulation() {
             statusEl.classList.add('text-red-600');
         }
         alert('Error de conexión. Asegúrate de que el servidor Flask esté corriendo. Error: ' + msg);
-        // Restaurar controles para permitir reintento
+    
         toggleInputs(false);
         document.getElementById('startButton').disabled = false;
         document.getElementById('stopButton').disabled = true;
@@ -375,7 +344,6 @@ function initializeSimulation() {
     });
 }
 
-// --- 4.b Gestión de Partículas (Frontend) ---
 function fetchParticles() {
     return fetch('/api/particles', { method: 'GET' })
     .then(resp => resp.json())
@@ -408,7 +376,6 @@ function renderParticlesTable() {
             tbody.appendChild(tr);
         });
 
-        // attach handlers
         document.querySelectorAll('.del-part').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(e.target.dataset.idx);
@@ -475,7 +442,7 @@ function importCsvFile(file) {
     .then(data => {
         if (data.error) throw new Error(data.error);
         logMessage('CSV importado. N=' + data.N);
-        // reload particles and visualization
+   
         initializeSimulation();
         renderParticlesTable();
     })
@@ -483,7 +450,7 @@ function importCsvFile(file) {
 }
 
 function exportParticlesCsv() {
-    // Forcing browser to download
+    
     window.location = '/api/particles/export';
 }
 
@@ -556,13 +523,13 @@ function simulationLoop() {
             return;
         }
         
-        // 1. Visualizar partículas (AHORA EN 3D)
+     
         updateParticles3D(data.r, L_BOX); 
         
-        // 2. Actualizar displays de texto y estado
+      
         updateSimulationDisplay(data.step, data.T, data.E, data.P, data.Z, data.is_equilibrium);
 
-        // MUESTREO DE GRÁFICOS
+        
         chartUpdateCounter++;
         if (chartUpdateCounter % CHART_SAMPLING_RATE === 0) {
             updateCharts(data);
@@ -590,14 +557,13 @@ function simulationLoop() {
     });
 }
 
-// --- 5. EVENT LISTENERS Y SETUP ---
+
 
 window.onload = () => {
-    // Inicializar la escena 3D y los gráficos ANTES de llamar a initializeSimulation
     init3DScene(); 
     initCharts(); 
 
-    // Ajustar el tamaño del canvas 3D (aunque init3DScene ya lo hace)
+  
     const canvas = document.getElementById('mdCanvas');
     canvas.width = canvas.parentElement.offsetWidth;
     canvas.height = canvas.parentElement.offsetHeight;

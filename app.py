@@ -4,7 +4,7 @@ import numpy as np
 import io
 import csv
 
-# --- 1. CLASES DE LÓGICA DE SIMULACIÓN (ESTABLE Y CORREGIDA) ---
+# --- 1. CLASES DE LÓGICA DE SIMULACIÓN ---
 
 class SimulationParams:
     """Almacena los parámetros físicos y computacionales para la simulación MD."""
@@ -20,18 +20,15 @@ class SimulationParams:
         self.r_ctf = r_ctf
         self.bs = bs
         self.mass = mass
-        self.wall_type = wall_type  # 'periodic' or 'reflective'
+        self.wall_type = wall_type 
         self.restitution = restitution
-        # Gravity and hard-sphere options
+
         self.use_gravity = use_gravity
         self.G = G
         self.hard_sphere = hard_sphere
-        # particle_radius can be scalar or array; if None will default to 0.5*sigma
+      
         self.particle_radius = particle_radius
-        # restitution for particle-particle collisions
         self.collision_restitution = collision_restitution
-
-        # L ahora es el tamaño de la caja en 3D (bs en unidades de sigma)
         self.L = self.bs * self.sig
         self.Volume = self.L ** 3
 
@@ -52,13 +49,13 @@ class MolecularDynamicsSimulatorPython:
         
     def _initialize_fcc(self, N, L):
         """Inicializa las posiciones en una red FCC con N partículas."""
-        n_cell = int(np.ceil((N / 4)**(1/3))) # Número de celdas unitarias por lado
+        n_cell = int(np.ceil((N / 4)**(1/3))) 
         r = []
         base_positions = np.array([
             [0, 0, 0], [0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]
         ])
         
-        a = L / n_cell # Constante de red de la celda unitaria
+        a = L / n_cell 
         
         count = 0
         for i in range(n_cell):
@@ -104,10 +101,10 @@ class MolecularDynamicsSimulatorPython:
                            use_gravity=use_gravity, G=G, hard_sphere=hard_sphere, particle_radius=particle_radius, collision_restitution=collision_restitution)
         L = self.params.L
         
-        # 1. Posiciones y velocidades: pueden venir definidas por el usuario
+        # 1. Posiciones y velocidades
         particles_input = params_dict.get('particles', None)
         if particles_input:
-            # Esperamos una lista de dicts con keys 'r' (3-list), 'v' (3-list), 'm' (float)
+
             r_list = []
             v_list = []
             m_list = []
@@ -121,34 +118,30 @@ class MolecularDynamicsSimulatorPython:
 
             r = np.array(r_list, dtype=np.float64)
             v = np.array(v_list, dtype=np.float64)
-            # If provided list length differs from N, adjust N
+
             if r.shape[0] != N:
                 N = r.shape[0]
                 self.params.N = N
         else:
-            # 1.b Posiciones: Inicialización FCC
             r = self._initialize_fcc(N, L)
             
-            # 2. Velocidades: Distribución de Maxwell-Boltzmann
-            v = np.random.randn(N, 3) # Vector de velocidades aleatorias
-        
-        # Eliminar el momento total (para simular un sistema aislado en el centro de masa)
+            v = np.random.randn(N, 3) 
         v -= np.mean(v, axis=0) 
         
-        # Ajustar las velocidades para que la temperatura inicial sea T_0
-        current_T = np.sum(v**2) / (3 * N - 3) # La temperatura actual
+   
+        current_T = np.sum(v**2) / (3 * N - 3) 
         scale_factor = np.sqrt(T_0 / current_T)
         v *= scale_factor
         
         # 3. Aceleraciones, masas y Variables de estado
         m_array = np.full(N, self.params.mass, dtype=np.float64)
         if particles_input:
-            # override masses if provided
+  
             m_array = np.array(m_list, dtype=np.float64)
 
-        # particle radii: if provided per-particle, use them; if scalar, broadcast; else default to 0.5*sigma
+
         if particles_input and any('r' in p and 'm' in p for p in particles_input):
-            # handled above
+    
             pass
 
         if particle_radius is None:
@@ -157,7 +150,7 @@ class MolecularDynamicsSimulatorPython:
             if isinstance(particle_radius, (list, tuple, np.ndarray)):
                 radii = np.array(particle_radius, dtype=np.float64)
                 if radii.shape[0] != N:
-                    # broadcast or trim
+               
                     radii = np.resize(radii, N)
             else:
                 radii = np.full(N, float(particle_radius), dtype=np.float64)
@@ -174,14 +167,14 @@ class MolecularDynamicsSimulatorPython:
         self.is_initialized = True
         self.average_values = {'T': 0.0, 'E': 0.0, 'P': 0.0, 'count': 0}
 
-        # Calcular fuerzas y energía iniciales (se almacena en self.particles['a'])
+        # Calcular fuerzas y energía iniciales 
         self.compute_forces() 
         self._compute_instantaneous_values() # Calcula T, E, P, Z iniciales
         
         return {
             "L": L, 
             "N": N, 
-            "r": self.particles['r'].tolist(), # <--- CORRECCIÓN: Envía las 3 coordenadas (X, Y, Z)
+            "r": self.particles['r'].tolist(),
             "T": self.instant_values['T'],
             "E": self.instant_values['E_total'],
             "P": self.instant_values['P'],
@@ -209,7 +202,7 @@ class MolecularDynamicsSimulatorPython:
         a = np.zeros((N, 3), dtype=np.float64)
         E_pot = 0.0
         virial = 0.0
-        # For gravitational potential (not stored separately here)
+
         G = self.params.G if hasattr(self.params, 'G') else 0.0
 
         for i in range(N):
@@ -222,22 +215,21 @@ class MolecularDynamicsSimulatorPython:
                     r6 = r2**3
                     r12 = r6**2
 
-                    # scalar part of force (derived from LJ), then vector F = scalar * r_ij
                     scalar = eps4 * (12.0 * sig12 / r12 - 6.0 * sig6 / r6) / r2
                     F_ij = scalar * r_ij
 
-                    # convert to accelerations using masses
+               
                     a[i] += F_ij / m[i]
                     a[j] -= F_ij / m[j]
 
                     E_pot += eps4 * (sig12 / r12 - sig6 / r6)
                     virial += np.dot(F_ij, r_ij)
-                # add gravity if enabled (attractive)
+          
                 if self.params.use_gravity and r2 > 1e-12:
-                    # Newtonian attraction: F = G * m_i * m_j / r^2 * unit_vector
+             
                     fg_mag = G * m[i] * m[j] / r2
                     n_ij = r_ij / np.sqrt(r2)
-                    Fg = -fg_mag * n_ij  # - because r_ij = r_i - r_j; attraction towards j
+                    Fg = -fg_mag * n_ij  
                     a[i] += Fg / m[i]
                     a[j] -= Fg / m[j]
 
@@ -254,7 +246,7 @@ class MolecularDynamicsSimulatorPython:
         # Energía cinética considerando masas: 0.5 * sum(m_i * v_i^2)
         E_kin = 0.5 * np.sum(m * np.sum(v**2, axis=1))
 
-        # Temperatura en unidades reducidas (k_B = 1)
+        # Temperatura en unidades reducidas
         self.instant_values['T'] = 2.0 * E_kin / (3.0 * N)
 
         self.instant_values['E_total'] = E_kin + self.instant_values['E_pot']
@@ -302,10 +294,10 @@ class MolecularDynamicsSimulatorPython:
 
         self.particles['r'] = r
 
-        # 2. Guardar aceleración actual (a(t)) para calcular velocidades al final
+        # 2. Guardar aceleración actual 
         a_old = a.copy() 
 
-        # 3. Recalcular fuerzas (y obtener la nueva aceleración a(t+dt))
+        # 3. Recalcular fuerzas 
         self.compute_forces()
         a_new = self.particles['a']
 
@@ -313,7 +305,7 @@ class MolecularDynamicsSimulatorPython:
         v += 0.5 * (a_old + a_new) * dt
         self.particles['v'] = v
         
-        # 5. Control de Temperatura (Termostato de Berendsen - solo para el periodo de ignición)
+        # 5. Control de Temperatura 
         if self.current_step < self.params.ign:
             E_kin = 0.5 * np.sum(v**2)
             current_T = 2.0 * E_kin / (3.0 * self.params.N)
@@ -341,7 +333,7 @@ class MolecularDynamicsSimulatorPython:
 
             return {
                 "step": self.current_step,
-                "r": self.particles['r'].tolist(), # <--- CORRECCIÓN: Envía las 3 coordenadas (X, Y, Z)
+                "r": self.particles['r'].tolist(), 
                 "T": self.instant_values['T'],
                 "E": self.instant_values['E_total'],
                 "P": self.instant_values['P'],
@@ -363,7 +355,7 @@ class MolecularDynamicsSimulatorPython:
             "P_avg": self.average_values['P'] / count,
         }
 
-# --- 2. CONFIGURACIÓN DE FLASK (Servidor) ---
+# --- 2. CONFIGURACIÓN DE FLASK  ---
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 simulator_instance = MolecularDynamicsSimulatorPython()
 
@@ -544,7 +536,7 @@ def import_particles_csv():
         reader = csv.DictReader(stream)
         imported = []
         for row in reader:
-            # Esperamos columnas: x,y,z,vx,vy,vz,m (m opcional)
+      
             x = float(row.get('x', row.get('X', 0.0)))
             y = float(row.get('y', row.get('Y', 0.0)))
             z = float(row.get('z', row.get('Z', 0.0)))
@@ -554,7 +546,6 @@ def import_particles_csv():
             m = float(row.get('m', row.get('mass', simulator_instance.params.mass)))
             imported.append({'r': [x, y, z], 'v': [vx, vy, vz], 'm': m})
 
-        # Replace current particles with imported set
         params = {
             'N': len(imported),
             'NS': simulator_instance.params.NS,
