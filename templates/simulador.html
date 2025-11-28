@@ -118,6 +118,35 @@
                             <p class="help-text text-xs text-gray-500 mt-1 hidden">Elige si las partículas que salen por un lado reaparecen en el opuesto (periódica) o rebotan en la pared (reflectiva).</p>
                         </label>
                         <label class="block">
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm font-medium text-gray-700">Gravedad N-cuerpos</span>
+                                <input id="chkUseGravity" type="checkbox" class="ml-2">
+                            </div>
+                            <div class="mt-2 grid grid-cols-2 gap-2">
+                                <input id="inputG" type="number" step="0.0001" value="1.0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="G">
+                                <input id="inputGravityRadius" type="number" step="0.1" value="0.0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Radio de influencia (opcional)">
+                            </div>
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">
+                                <strong>Ejemplo:</strong> `G = 1.0`, `Radio de influencia = 0.0`<br>
+                                Activa la interacción gravitatoria entre todas las partículas (Newton). Atención: coste O(N^2).
+                            </p>
+                        </label>
+
+                        <label class="block">
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm font-medium text-gray-700">Colisiones rígidas (Hard-Sphere)</span>
+                                <input id="chkHardSphere" type="checkbox" class="ml-2">
+                            </div>
+                            <div class="mt-2 grid grid-cols-2 gap-2">
+                                <input id="inputParticleRadius" type="number" step="0.01" value="0.5" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Radio (σ*0.5)">
+                                <input id="inputCollisionRestitution" type="number" step="0.01" value="1.0" min="0" max="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Restitución">
+                            </div>
+                            <p class="help-text text-xs text-gray-500 mt-1 hidden">
+                                <strong>Ejemplo:</strong> `Radio = 0.5`, `Restitución = 1.0`<br>
+                                Si está activado, se detectan colisiones duras entre partículas y se resuelven con conservación de momento y coef. de restitución.
+                            </p>
+                        </label>
+                        <label class="block">
                             <span class="text-sm font-medium text-gray-700">Coef. de restitución (e, 0-1):</span>
                             <input id="inputRestitution" type="number" step="0.01" value="1.0" min="0" max="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                             <p class="help-text text-xs text-gray-500 mt-1 hidden">Valor entre 0 y 1 que controla cuánto conserva la velocidad una partícula al rebotar (1 = completamente elástico).</p>

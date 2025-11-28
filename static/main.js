@@ -318,7 +318,12 @@ function initializeSimulation() {
         eps: parseFloat(document.getElementById('inputEps').value),
         mass: parseFloat(document.getElementById('inputMass').value),
         wall_type: document.getElementById('selectWallType').value,
-        restitution: parseFloat(document.getElementById('inputRestitution').value)
+        restitution: parseFloat(document.getElementById('inputRestitution').value),
+        use_gravity: document.getElementById('chkUseGravity').checked,
+        G: parseFloat(document.getElementById('inputG').value),
+        hard_sphere: document.getElementById('chkHardSphere').checked,
+        particle_radius: parseFloat(document.getElementById('inputParticleRadius').value),
+        collision_restitution: parseFloat(document.getElementById('inputCollisionRestitution').value)
     };
     
     return fetch('/api/initialize', {

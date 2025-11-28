@@ -8,7 +8,8 @@ import csv
 
 class SimulationParams:
     """Almacena los parámetros físicos y computacionales para la simulación MD."""
-    def __init__(self, N, NS, dt, T_0, ign, sig=1.0, eps=1.0, r_ctf=2.5, bs=4.0, mass=1.0, wall_type='periodic', restitution=1.0):
+    def __init__(self, N, NS, dt, T_0, ign, sig=1.0, eps=1.0, r_ctf=2.5, bs=4.0, mass=1.0, wall_type='periodic', restitution=1.0,
+                 use_gravity=False, G=1.0, hard_sphere=False, particle_radius=None, collision_restitution=1.0):
         self.N = N
         self.NS = NS
         self.dt = dt
@@ -21,6 +22,14 @@ class SimulationParams:
         self.mass = mass
         self.wall_type = wall_type  # 'periodic' or 'reflective'
         self.restitution = restitution
+        # Gravity and hard-sphere options
+        self.use_gravity = use_gravity
+        self.G = G
+        self.hard_sphere = hard_sphere
+        # particle_radius can be scalar or array; if None will default to 0.5*sigma
+        self.particle_radius = particle_radius
+        # restitution for particle-particle collisions
+        self.collision_restitution = collision_restitution
 
         # L ahora es el tamaño de la caja en 3D (bs en unidades de sigma)
         self.L = self.bs * self.sig
@@ -85,8 +94,14 @@ class MolecularDynamicsSimulatorPython:
         mass = float(params_dict.get('mass', 1.0))
         wall_type = params_dict.get('wall_type', 'periodic')
         restitution = float(params_dict.get('restitution', 1.0))
+        use_gravity = bool(params_dict.get('use_gravity', False))
+        G = float(params_dict.get('G', 1.0))
+        hard_sphere = bool(params_dict.get('hard_sphere', False))
+        particle_radius = params_dict.get('particle_radius', None)
+        collision_restitution = float(params_dict.get('collision_restitution', restitution))
 
-        self.params = SimulationParams(N=N, NS=NS, dt=dt, T_0=T_0, ign=ign, bs=bs, sig=sig, eps=eps, mass=mass, wall_type=wall_type, restitution=restitution)
+        self.params = SimulationParams(N=N, NS=NS, dt=dt, T_0=T_0, ign=ign, bs=bs, sig=sig, eps=eps, mass=mass, wall_type=wall_type, restitution=restitution,
+                           use_gravity=use_gravity, G=G, hard_sphere=hard_sphere, particle_radius=particle_radius, collision_restitution=collision_restitution)
         L = self.params.L
         
         # 1. Posiciones y velocidades: pueden venir definidas por el usuario
@@ -131,11 +146,28 @@ class MolecularDynamicsSimulatorPython:
             # override masses if provided
             m_array = np.array(m_list, dtype=np.float64)
 
+        # particle radii: if provided per-particle, use them; if scalar, broadcast; else default to 0.5*sigma
+        if particles_input and any('r' in p and 'm' in p for p in particles_input):
+            # handled above
+            pass
+
+        if particle_radius is None:
+            radii = np.full(N, 0.5 * self.params.sig, dtype=np.float64)
+        else:
+            if isinstance(particle_radius, (list, tuple, np.ndarray)):
+                radii = np.array(particle_radius, dtype=np.float64)
+                if radii.shape[0] != N:
+                    # broadcast or trim
+                    radii = np.resize(radii, N)
+            else:
+                radii = np.full(N, float(particle_radius), dtype=np.float64)
+
         self.particles = {
             'r': r,
             'v': v,
             'a': np.zeros((N, 3), dtype=np.float64),
-            'm': m_array
+            'm': m_array,
+            'radius': radii
         }
         
         self.current_step = 0
@@ -177,6 +209,8 @@ class MolecularDynamicsSimulatorPython:
         a = np.zeros((N, 3), dtype=np.float64)
         E_pot = 0.0
         virial = 0.0
+        # For gravitational potential (not stored separately here)
+        G = self.params.G if hasattr(self.params, 'G') else 0.0
 
         for i in range(N):
             for j in range(i + 1, N):
@@ -198,6 +232,14 @@ class MolecularDynamicsSimulatorPython:
 
                     E_pot += eps4 * (sig12 / r12 - sig6 / r6)
                     virial += np.dot(F_ij, r_ij)
+                # add gravity if enabled (attractive)
+                if self.params.use_gravity and r2 > 1e-12:
+                    # Newtonian attraction: F = G * m_i * m_j / r^2 * unit_vector
+                    fg_mag = G * m[i] * m[j] / r2
+                    n_ij = r_ij / np.sqrt(r2)
+                    Fg = -fg_mag * n_ij  # - because r_ij = r_i - r_j; attraction towards j
+                    a[i] += Fg / m[i]
+                    a[j] -= Fg / m[j]
 
         self.particles['a'] = a
         self.instant_values['E_pot'] = E_pot
