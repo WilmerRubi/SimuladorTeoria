@@ -7,7 +7,22 @@ import csv
 # --- 1. CLASES DE LÓGICA DE SIMULACIÓN ---
 
 class SimulationParams:
-    """Almacena los parámetros físicos y computacionales para la simulación MD."""
+        """Almacena los parámetros físicos y computacionales para la simulación MD.
+
+        Comentarios generales:
+        - Esta clase centraliza las constantes y parámetros que definen la
+            simulación: número de partículas `N`, número de pasos `NS`, paso de
+            tiempo `dt`, temperatura objetivo `T_0`, parámetros del potencial
+            Lennard-Jones (`sig`, `eps`, `r_ctf`), tamaño de caja `bs`, masa por
+            defecto y tipo de pared.
+        - También guarda flags para activar características opcionales como
+            gravedad (`use_gravity`) y colisiones rígidas (`hard_sphere`), junto
+            con parámetros asociados (constante gravitacional `G`, radios,
+            coeficientes de restitución).
+        - `L` y `Volume` derivan del tamaño de caja `bs` y se usan para aplicar
+            condiciones de frontera y cómputos de densidad/ presión.
+        - Notas: los valores por defecto están en unidades reducidas (σ = 1).
+        """
     def __init__(self, N, NS, dt, T_0, ign, sig=1.0, eps=1.0, r_ctf=2.5, bs=4.0, mass=1.0, wall_type='periodic', restitution=1.0,
                  use_gravity=False, G=1.0, hard_sphere=False, particle_radius=None, collision_restitution=1.0):
         self.N = N
@@ -38,7 +53,24 @@ class SimulationParams:
         self.eps4 = 4.0 * self.eps
 
 class MolecularDynamicsSimulatorPython:
-    """Clase para la lógica de MD, ahora diseñada para ser controlada por un servidor."""
+        """Clase para la lógica de la simulación Molecular Dynamics (MD).
+
+        Responsabilidades principales:
+        - Mantener el estado de todas las partículas (`self.particles`):
+            posiciones `r`, velocidades `v`, aceleraciones `a`, masas `m` y radios.
+        - Inicializar configuraciones (red FCC o entrada desde CSV/cliente) y
+            normalizar velocidades a la temperatura objetivo.
+        - Calcular fuerzas entre partículas: potencial Lennard-Jones por defecto
+            y, opcionalmente, atracción newtoniana (gravedad) si `use_gravity`.
+        - Integrar las ecuaciones de movimiento mediante un esquema tipo Verlet
+            y aplicar termostato de Berendsen durante la fase de ignición.
+        - Detectar y resolver colisiones rígidas (modo `hard_sphere`) usando
+            resolución por impulsos y corrección posicional simple.
+
+        Advertencia de rendimiento: las rutinas de fuerza y colisión usan un
+        doble bucle sobre pares (O(N^2)). Para sistemas con muchas partículas
+        es recomendable implementar neighbor-lists (cell-lists / Verlet lists).
+        """
     def __init__(self):
         self.is_initialized = False
         self.current_step = 0
@@ -80,6 +112,13 @@ class MolecularDynamicsSimulatorPython:
 
     def initialize(self, params_dict):
         """Inicializa o reinicializa el estado de la simulación."""
+        # --- Qué hace `initialize()` ---
+        # 1) Lee parámetros físicos y de ejecución provistos por el cliente.
+        # 2) Construye la configuración inicial de posiciones (red FCC por
+        #    defecto o entrada explícita desde `particles`) y genera
+        #    velocidades aleatorias que se escalan para la temperatura inicial.
+        # 3) Inicializa arrays de masas y radios por partícula.
+        # 4) Calcula fuerzas iniciales y valores instantáneos (T, E, P, Z).
         N = int(params_dict.get('N', 50))
         NS = int(params_dict.get('NS', 5000))
         dt = float(params_dict.get('dt', 0.005))
@@ -190,6 +229,17 @@ class MolecularDynamicsSimulatorPython:
 
     def compute_forces(self):
         """Calcula fuerzas, energía potencial y presión viral."""
+        # --- Flujos principales de `compute_forces()` ---
+        # Recorre todos los pares (i < j) y:
+        #  - Aplica la convención de la imagen mínima para PBC.
+        #  - Si r_ij está dentro del corte (`rcut2`) calcula la fuerza
+        #    Lennard-Jones y contribuye a la aceleración de cada partícula.
+        #  - Si `use_gravity` está activado se añade la fuerza de atracción
+        #    newtoniana entre pares (proporcional a m_i * m_j / r^2).
+        #  - Acumula energía potencial y el término virial para la presión.
+        #
+        # Resultado: actualiza `self.particles['a']` con la aceleración total
+        # por partícula y guarda `E_pot` y `virial` en `self.instant_values`.
         r = self.particles['r']
         N = self.params.N
         L = self.params.L
@@ -239,6 +289,12 @@ class MolecularDynamicsSimulatorPython:
 
     def _compute_instantaneous_values(self):
         """Calcula T, E, P, Z en el estado actual."""
+        # Calcula magnitudes termodinámicas instantáneas a partir del estado:
+        # - Energía cinética (teniendo en cuenta masas individuales)
+        # - Temperatura (en unidades reducidas, k_B = 1 en estas unidades)
+        # - Energía total (cinética + potencial)
+        # - Presión mediante la relación que incluye el término virial
+        # - Factor Z = P / (rho * T)
         v = self.particles['v']
         N = self.params.N
         Volume = self.params.Volume
@@ -267,6 +323,17 @@ class MolecularDynamicsSimulatorPython:
 
     def _integrate_step(self):
         """Implementa el algoritmo de Verlet de forma simplificada."""
+        # --- Esquema de integración (por paso) ---
+        # 1) Avanzar posiciones r(t+dt) = r(t) + v*dt + 0.5*a*dt^2
+        # 2) Aplicar condiciones de frontera: periódicas (PBC) o reflectivas.
+        # 3) Guardar aceleración antigua a(t).
+        # 4) Calcular nuevas fuerzas → a(t+dt) llamando a compute_forces().
+        # 5) (Si está activado) resolver colisiones rígidas (hard-sphere):
+        #    detectar solapamientos, aplicar impulso normal y corrección
+        #    posicional para evitar interpenetración.
+        # 6) Actualizar velocidades v(t+dt) = v(t) + 0.5*(a(t)+a(t+dt))*dt.
+        # 7) Aplicar termostato de Berendsen durante la fase de ignición
+        #    (si current_step < ign) para acoplar rápidamente la temperatura.
         r = self.particles['r']
         v = self.particles['v']
         a = self.particles['a']
